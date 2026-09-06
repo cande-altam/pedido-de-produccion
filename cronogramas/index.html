@@ -446,6 +446,23 @@
 
       <section class="card">
         <div class="card-body" style="padding-bottom:16px">
+          <span class="eyebrow">Nombres de las filas de la grilla</span>
+          <p class="sub" style="padding:4px 0 0">Cambiá cómo se llama una fila puntual (ej: "Vendedor 1") sin tocar qué puesto cubre en realidad — se ve así en todas las semanas, la grilla y al imprimir.</p>
+          <div class="field">
+            <label for="rowLabelLoc">Local</label>
+            <select id="rowLabelLoc"><option value="SL">San Luis</option><option value="SLA">SLA</option></select>
+          </div>
+          <div class="field">
+            <label for="rowLabelShift">Turno</label>
+            <select id="rowLabelShift"><option value="M">Mañana</option><option value="T">Tarde</option></select>
+          </div>
+          <div id="rowLabelFields" style="display:flex;flex-direction:column;gap:8px;margin-top:12px"></div>
+          <button class="btn" id="btnSaveRowLabels" style="margin-top:9px;width:100%">Guardar nombres</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-body" style="padding-bottom:16px">
           <span class="eyebrow">Experto Candela</span>
           <p class="sub" style="padding:4px 0 0">Se destaca con ⭐ dondequiera que esa persona aparezca asignada en la grilla, y también al imprimir. Si un turno tiene dos expertos a la vez, gana uno por defecto — tocá el botón "⭐?" que aparece junto al otro para elegirlo a él en su lugar.</p>
           <div class="field">
@@ -758,7 +775,7 @@ onValue(vacacionesRef, snap=>{
 // (se ve en el encabezado). Un dispositivo con una copia guardada vieja del HTML no tiene
 // el código de sincronización nuevo aunque el deploy ya haya salido — pasó, costó horas de
 // diagnóstico en otro módulo de este sitio. Actualizar a mano en cada cambio importante.
-const APP_VERSION="2026-09-04 copiar-semana-anterior-y-plantel";
+const APP_VERSION="2026-09-06 editar-nombres-de-fila";
 /* ---------------- DATA MODEL ---------------- */
 const DAYS=[["lun","Lunes","Lun"],["mar","Martes","Mar"],["mie","Miércoles","Mié"],["jue","Jueves","Jue"],["vie","Viernes","Vie"],["sab","Sábado","Sáb"],["dom","Domingo","Dom"]];
 const ROLE_LABEL={barista:"Barista",cocina:"Cocina",ayudante:"Bacha/Envíos",cajero:"Cajero",atencion:"Atención",compras:"Compras"};
@@ -872,6 +889,14 @@ function rowsFor(loc,shift){
     {role:"barista",idx:0,label:"Barista"},{role:"atencion",idx:0,label:"Mozo 1"},
     {role:"atencion",idx:1,label:"Mozo 2"},{role:"cocina",idx:0,label:"Cocina"}];
 }
+// nombre a mostrar de una fila puntual de la grilla: por default el de rowsFor, pero se puede
+// renombrar por local+turno+puesto+posición desde "Nombres de las filas" sin tocar qué puesto
+// cubre en realidad esa fila (es solo el texto que se ve, el rol/idx interno no cambia).
+function rowLabelKey(loc,shift,role,idx){return `${loc}|${shift}|${role}|${idx}`;}
+function rowLabelFor(loc,shift,row){
+  const k=rowLabelKey(loc,shift,row.role,row.idx);
+  return (state.rowLabelOverride&&state.rowLabelOverride[k])||row.label;
+}
 const isWknd=d=>d>=5;
 function isClosed(d,loc,shift){return state.rules.some(r=>r.type==="cierre"&&r.day===d&&(r.loc===loc||r.loc==="both")&&(r.shift===shift||r.shift==="ALL"));}
 // sellable: la celda es editable en la grilla (siempre, salvo que el local esté cerrado ese turno)
@@ -894,7 +919,7 @@ function peopleFor(role,loc){
 }
 
 /* ---------------- STATE ---------------- */
-function defaultState(){return {label:"",weekStart:"",assign:{},abs:[],ex:[],rules:[],fixed:[],francoFixed:{},roleOverride:{},backupOverride:{},comments:{},migrationsApplied:[],peopleExtra:[],incompat:[],ausObviada:{},expertos:[],expertoTurno:{},stickyNotes:[]};}
+function defaultState(){return {label:"",weekStart:"",assign:{},abs:[],ex:[],rules:[],fixed:[],francoFixed:{},roleOverride:{},backupOverride:{},comments:{},migrationsApplied:[],peopleExtra:[],incompat:[],ausObviada:{},expertos:[],expertoTurno:{},stickyNotes:[],rowLabelOverride:{}};}
 // múltiples semanas en simultáneo: se puede tener septiembre entero cargado, cada semana con sus
 // propias asignaciones/ausencias/refuerzos, y saltar de una a otra sin que se pisen entre sí. Lo que
 // SÍ es común a todas las semanas (quién trabaja acá, sus puestos, reglas fijas, incompatibilidades,
@@ -1620,12 +1645,12 @@ function locTable(loc,title,worked){
     roles.forEach(role=>{
       const brows=base.filter(r=>r.role===role);
       brows.forEach(row=>{
-        h+=`<tr><td class="puesto">${row.label}${row.wk?' <span class="wktag">refuerzo</span>':""}</td>`;
+        h+=`<tr><td class="puesto">${rowLabelFor(loc,shift,row)}${row.wk?' <span class="wktag">refuerzo</span>':""}</td>`;
         for(let d=0;d<7;d++)h+=selHTML(d,loc,shift,row.role,row.idx,sellable(d,loc,shift),isClosed(d,loc,shift));
         h+=`</tr>`;
       });
       const cap=MAX_TURNO[role]!=null?Math.max(0,MAX_TURNO[role]-brows.length):undefined;
-      h+=extraRowsHTML(loc,shift,role,extraLabelFor(loc,role,shift,brows[0].label),cap);
+      h+=extraRowsHTML(loc,shift,role,extraLabelFor(loc,role,shift,rowLabelFor(loc,shift,brows[0])),cap);
     });
     // refuerzos con un puesto que este local no tiene como fila base (ej: Bacha/Envíos en SLA):
     // sin esto, "Personas extra" los guardaba pero no aparecían en ningún lado.
@@ -1878,7 +1903,7 @@ function buildScheduleRows(loc,worked){
           const v=state.assign[key(d,loc,shift,row.role,row.idx)];
           return{text:v?(esExpertoActivo(v,d,loc,shift)?"⭐ ":"")+v:"—",muted:!v,expert:v&&esExpertoActivo(v,d,loc,shift)};
         });
-        rows.push({label:row.label,cells});
+        rows.push({label:rowLabelFor(loc,shift,row),cells});
       });
       const maxE=Math.max(0,...DAYS.map((_,d)=>exAt(d,loc,shift,role).length));
       for(let r=0;r<maxE;r++){
@@ -1888,7 +1913,7 @@ function buildScheduleRows(loc,worked){
           const activo=filled&&esExpertoActivo(e.n,d,loc,shift);
           return{text:filled?(activo?"⭐ ":"")+e.n+(e.half?" ½":""):"",extra:true,expert:activo};
         });
-        rows.push({label:`${extraLabelFor(loc,role,shift,brows[0].label)} +`,cells,extra:true});
+        rows.push({label:`${extraLabelFor(loc,role,shift,rowLabelFor(loc,shift,brows[0]))} +`,cells,extra:true});
       }
     });
   });
@@ -2174,6 +2199,31 @@ function syncRoleControls(){
     ).join("");
   }
 }
+// "Nombres de las filas de la grilla": una fila de texto editable por cada fila real de ese
+// local+turno (rowsFor), precargada con el nombre actual (personalizado o el default del sistema).
+function renderRowLabelFields(){
+  const wrap=document.getElementById("rowLabelFields");if(!wrap)return;
+  const loc=document.getElementById("rowLabelLoc").value;
+  const shift=document.getElementById("rowLabelShift").value;
+  const rows=rowsFor(loc,shift);
+  wrap.innerHTML=rows.map(row=>{
+    const k=rowLabelKey(loc,shift,row.role,row.idx);
+    const cur=rowLabelFor(loc,shift,row);
+    const isCustom=Object.prototype.hasOwnProperty.call(state.rowLabelOverride,k);
+    return `<div class="field" style="margin:0">
+      <label>${row.label}${row.wk?" (refuerzo)":""}</label>
+      <div style="display:flex;gap:6px">
+        <input type="text" data-rowlabelkey="${k}" data-rowlabeldefault="${escAttr(row.label)}" value="${escAttr(cur)}" style="flex:1">
+        ${isCustom?`<button type="button" class="btn ghost icon-btn" data-rowlabelreset="${k}" title="Volver a &quot;${escAttr(row.label)}&quot;">↺</button>`:""}
+      </div>
+    </div>`;
+  }).join("");
+  wrap.querySelectorAll("[data-rowlabelreset]").forEach(b=>b.addEventListener("click",()=>{
+    delete state.rowLabelOverride[b.dataset.rowlabelreset];
+    render();persist();renderRowLabelFields();
+    toast("Nombre restaurado");
+  }));
+}
 function renderMini(){
   const al=document.getElementById("absList");
   // cada día de ausencia se puede sacar suelto (xday) sin tener que borrar toda la fila de la
@@ -2236,6 +2286,7 @@ function renderMini(){
     });
     rol.innerHTML=rows.length?rows.join(""):`<p class="sub" style="padding:0">Nadie tiene el puesto cambiado todavía — todos usan el default del sistema.</p>`;
   }
+  renderRowLabelFields();
   document.querySelectorAll(".daychip .xday").forEach(b=>b.addEventListener("click",()=>{
     const ai=+b.dataset.ai,d=+b.dataset.d;
     const a=state.abs[ai];if(!a)return;
@@ -2370,6 +2421,20 @@ function initControls(){
     state.backupOverride[n]=checked;
     fillPersonSelects();renderMini();render();persist();
     toast(checked.length?`Respaldos de ${n} guardados`:`${n} ya no tiene puestos de respaldo`);
+  });
+  document.getElementById("rowLabelLoc").addEventListener("change",renderRowLabelFields);
+  document.getElementById("rowLabelShift").addEventListener("change",renderRowLabelFields);
+  document.getElementById("btnSaveRowLabels").addEventListener("click",()=>{
+    let cambios=0;
+    document.querySelectorAll("#rowLabelFields [data-rowlabelkey]").forEach(inp=>{
+      const k=inp.dataset.rowlabelkey,def=inp.dataset.rowlabeldefault,val=inp.value.trim();
+      const yaTenia=Object.prototype.hasOwnProperty.call(state.rowLabelOverride,k);
+      if(!val||val===def){if(yaTenia){delete state.rowLabelOverride[k];cambios++;}return;}
+      if(state.rowLabelOverride[k]!==val){state.rowLabelOverride[k]=val;cambios++;}
+    });
+    if(!cambios)return toast("No había cambios para guardar");
+    render();persist();renderRowLabelFields();
+    toast("Nombres guardados ✅");
   });
   document.getElementById("francoPerson").addEventListener("change",syncFrancoDaySelection);
   document.getElementById("btnSetFranco").addEventListener("click",()=>{
@@ -2575,6 +2640,7 @@ function limpiarPersonasDadasDeBaja(){
   state.expertos=state.expertos.filter(n=>BY_NAME[n]);
   if(!state.expertoTurno)state.expertoTurno={};
   Object.keys(state.expertoTurno).forEach(k=>{if(!BY_NAME[state.expertoTurno[k]])delete state.expertoTurno[k];});
+  if(!state.rowLabelOverride)state.rowLabelOverride={};
 }
 // Leandro (el barista, SLA) pasa a llamarse "Leandro Villagra" para no confundirlo con Leandro
 // Tolaba (persona aparte, solo en el módulo de Vacaciones — producción/Cuadra). Migra cualquier
