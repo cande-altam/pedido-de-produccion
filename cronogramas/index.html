@@ -758,7 +758,7 @@ onValue(vacacionesRef, snap=>{
 // (se ve en el encabezado). Un dispositivo con una copia guardada vieja del HTML no tiene
 // el código de sincronización nuevo aunque el deploy ya haya salido — pasó, costó horas de
 // diagnóstico en otro módulo de este sitio. Actualizar a mano en cada cambio importante.
-const APP_VERSION="2026-09-04 semanas-en-simultaneo";
+const APP_VERSION="2026-09-04 copiar-semana-anterior-y-plantel";
 /* ---------------- DATA MODEL ---------------- */
 const DAYS=[["lun","Lunes","Lun"],["mar","Martes","Mar"],["mie","Miércoles","Mié"],["jue","Jueves","Jue"],["vie","Viernes","Vie"],["sab","Sábado","Sáb"],["dom","Domingo","Dom"]];
 const ROLE_LABEL={barista:"Barista",cocina:"Cocina",ayudante:"Bacha/Envíos",cajero:"Cajero",atencion:"Atención",compras:"Compras"};
@@ -820,10 +820,8 @@ function feriadosEnSemana(){
 // agregada a mano desde el botón "Sumar persona al equipo". Así el resto del código (BY_NAME,
 // selects, filas de la grilla) no necesita saber que existen dos fuentes distintas.
 const PEOPLE_BASE=[
-  {n:"Lucía",role:"barista",loc:"SL",franco:"mar"},
   {n:"Luciana",role:"barista",loc:"both",franco:"vie"},
   {n:"Gabriel",role:"barista",loc:"both",franco:"lun"},
-  {n:"Leandro Villagra",role:"barista",loc:"SLA",franco:"jue"},
   {n:"Mariano",role:"barista",loc:"both",he:true},
   {n:"Luis",role:"cocina",loc:"SL",franco:"jue"},
   {n:"Vanesa",role:"cocina",loc:"SL",franco:"mie"},
@@ -853,7 +851,7 @@ function rebuildPeople(){
   PEOPLE=PEOPLE_BASE.concat(state.peopleExtra||[]);
   BY_NAME=Object.fromEntries(PEOPLE.map(p=>[p.n,p]));
 }
-const EVENT_HE=["Dana","Brenda","Guadalupe","Aaron","Lucía","Luciana","Gabriel","Valentina"];
+const EVENT_HE=["Dana","Brenda","Guadalupe","Aaron","Luciana","Gabriel","Valentina"];
 
 // slot templates per local/shift. weekendOnly rows only required Sat/Sun.
 function rowsFor(loc,shift){
@@ -1019,17 +1017,28 @@ function loadWeek(key,seedWeekObj){
 }
 // crea una semana nueva para "dateStr" (preguntando si copiar la grilla actual como base) o, si ya
 // existe una semana con esa fecha, simplemente salta a ella — nunca pisa la que ya había.
-function crearOAbrirSemana(dateStr,opts){
-  opts=opts||{};
+function addDaysISO(dateStr,n){
+  const d=new Date(dateStr+"T00:00:00");d.setDate(d.getDate()+n);
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+// crea la semana de "dateStr" copiando SIEMPRE la grilla de la semana calendario anterior (7 días
+// antes) como base — así armar un mes entero es solo ajustar lo que cambia de una semana a la
+// siguiente, no cargar todo de cero cada vez. Busca esa semana anterior en lo que ya hay guardado
+// en este dispositivo (o en la que tenés abierta ahora mismo, si es esa); si no la encuentra, arranca
+// en blanco sin preguntar nada (nada de diálogos de confirmación: se presta a que se entienda al
+// revés y termine armando una semana vacía sin que te des cuenta).
+function crearOAbrirSemana(dateStr){
   if(!dateStr)return;
   const localWeeks=loadLocalWeeks();
   const yaExiste=Object.prototype.hasOwnProperty.call(localWeeks,dateStr)||(weekIndexCache&&Object.prototype.hasOwnProperty.call(weekIndexCache,dateStr));
   if(yaExiste){loadWeek(dateStr);toast("Semana abierta");return;}
-  const copiarBase=opts.copyBase!==undefined?opts.copyBase:confirm("Todavía no hay una semana cargada para esa fecha.\n\n¿Copiar las asignaciones de la semana actual como base para la nueva?");
   const seed=blankWeek(dateStr);
-  if(copiarBase)seed.assign=JSON.parse(JSON.stringify(state.assign));
+  const prevKey=addDaysISO(dateStr,-7);
+  const prevWeek=localWeeks[prevKey]||(prevKey===weekKeyOf(state)?weekPart(state):null);
+  const copio=!!(prevWeek&&Object.keys(prevWeek.assign||{}).length);
+  if(prevWeek)seed.assign=JSON.parse(JSON.stringify(prevWeek.assign||{}));
   loadWeek(dateStr,seed);
-  toast("Semana nueva lista"+(copiarBase?" (base copiada)":""));
+  toast(copio?"Semana nueva lista (copiada de la semana anterior)":"Semana nueva lista (no había una semana anterior para copiar)");
 }
 // deshacer/rehacer local: solo tocan los datos de ESTA semana (nunca la config global ni otra
 // semana) — restoreLocalWeekSnapshot no re-suscribe ni cambia qué semana está activa.
@@ -2383,12 +2392,9 @@ function initControls(){
   });
   document.getElementById("btnNew").addEventListener("click",()=>{
     // avanza 7 días desde la semana actual (o desde hoy si todavía no había fecha) y abre/crea esa
-    // semana copiando la grilla actual como base — la semana de la que partís queda intacta.
-    let next;
-    if(state.weekStart){const d=new Date(state.weekStart+"T00:00:00");d.setDate(d.getDate()+7);next=d;}
-    else next=new Date();
-    const val=next.getFullYear()+"-"+String(next.getMonth()+1).padStart(2,"0")+"-"+String(next.getDate()).padStart(2,"0");
-    crearOAbrirSemana(val,{copyBase:true});
+    // semana — crearOAbrirSemana ya se encarga de copiarla de la semana anterior como base.
+    const val=state.weekStart?addDaysISO(state.weekStart,7):addDaysISO(new Date().toISOString().slice(0,10),0);
+    crearOAbrirSemana(val);
   });
   document.getElementById("ruleType").addEventListener("change",e=>{
     const cierre=e.target.value==="cierre";
