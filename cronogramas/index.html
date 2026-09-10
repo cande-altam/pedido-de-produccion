@@ -710,6 +710,17 @@ onValue(weekIndexRef, snap=>{
   window.dispatchEvent(new CustomEvent("weekindex-update",{detail:snap.val()||{}}));
 }, err=>console.error("weekIndex onValue:",err));
 
+// lectura puntual (no en vivo) de una semana puntual — para confirmar contra la nube, antes de
+// tratar una fecha como "semana nueva", que ninguna otra ruta de refuerzo ni la caché local todavía
+// vieron. Sin esto, si este dispositivo abre una semana que YA existe en la nube pero ni la tiene
+// cacheada ni el índice liviano llegó a tiempo (recién abierta la página, por ejemplo), se la podía
+// llegar a tratar como nueva y pisarla en blanco — justo el tipo de pérdida de datos que esto evita.
+window.CloudWeekRead = {
+  get(weekKey){
+    return get(ref(db,"cronogramas/weeks/"+weekKey)).then(s=>s.val());
+  }
+};
+
 // migración única desde la ruta vieja (cronogramas/state, un solo bloque para toda la app) hacia
 // la nueva (config separada + una ruta por semana). Es una transformación determinística de los
 // mismos datos de origen, así que no importa si más de un dispositivo la dispara al mismo tiempo:
@@ -775,7 +786,7 @@ onValue(vacacionesRef, snap=>{
 // (se ve en el encabezado). Un dispositivo con una copia guardada vieja del HTML no tiene
 // el código de sincronización nuevo aunque el deploy ya haya salido — pasó, costó horas de
 // diagnóstico en otro módulo de este sitio. Actualizar a mano en cada cambio importante.
-const APP_VERSION="2026-09-06 renombrar-mozos-sl-sla";
+const APP_VERSION="2026-09-10 fix-perdida-de-datos-semana-nueva";
 /* ---------------- DATA MODEL ---------------- */
 const DAYS=[["lun","Lunes","Lun"],["mar","Martes","Mar"],["mie","Miércoles","Mié"],["jue","Jueves","Jue"],["vie","Viernes","Vie"],["sab","Sábado","Sáb"],["dom","Domingo","Dom"]];
 const ROLE_LABEL={barista:"Barista",cocina:"Cocina",ayudante:"Bacha/Envíos",cajero:"Cajero",atencion:"Atención",compras:"Compras"};
@@ -1069,11 +1080,39 @@ function addDaysISO(dateStr,n){
 // en este dispositivo (o en la que tenés abierta ahora mismo, si es esa); si no la encuentra, arranca
 // en blanco sin preguntar nada (nada de diálogos de confirmación: se presta a que se entienda al
 // revés y termine armando una semana vacía sin que te des cuenta).
-function crearOAbrirSemana(dateStr){
+async function crearOAbrirSemana(dateStr){
   if(!dateStr)return;
   const localWeeks=loadLocalWeeks();
-  const yaExiste=Object.prototype.hasOwnProperty.call(localWeeks,dateStr)||(weekIndexCache&&Object.prototype.hasOwnProperty.call(weekIndexCache,dateStr));
-  if(yaExiste){loadWeek(dateStr);toast("Semana abierta");return;}
+  if(Object.prototype.hasOwnProperty.call(localWeeks,dateStr)){loadWeek(dateStr);toast("Semana abierta");return;}
+  let remoteWeek=null,remoteConfirmed=weekIndexCache&&Object.prototype.hasOwnProperty.call(weekIndexCache,dateStr);
+  // hay conexión real con la nube si el módulo de Firebase llegó a cargar (window.CloudSync existe
+  // apenas carga, antes de que se resuelva ningún pedido) — si NO hay conexión, seguimos con el
+  // criterio local nomás, como el resto de la app sin internet (nada se sube hasta que vuelva la
+  // conexión, así que no hay riesgo de pisar algo que todavía no vimos).
+  const online=!!(window.CloudSync&&window.CloudSyncWeek);
+  // este dispositivo no la tiene cacheada — antes de asumir que es una semana nueva, confirmamos
+  // contra la nube directamente (no alcanza con weekIndexCache: si la página recién cargó, todavía
+  // puede no haber llegado). Sin este chequeo, una semana que SÍ existe pero que este dispositivo
+  // todavía no vio se trataba como nueva y se pisaba en blanco al guardar — pérdida de datos real.
+  if(!remoteConfirmed&&online&&window.CloudWeekRead){
+    try{
+      remoteWeek=await window.CloudWeekRead.get(dateStr);
+      remoteConfirmed=true;
+    }catch(e){console.error("chequeo de semana existente:",e);}
+  }
+  if(remoteConfirmed&&remoteWeek){
+    saveLocalWeek(dateStr,Object.assign(blankWeek(dateStr),remoteWeek));
+    loadWeek(dateStr);
+    toast("Semana abierta");
+    return;
+  }
+  if(online&&!remoteConfirmed){
+    // hay conexión pero no se pudo confirmar (falla puntual): por las dudas no se crea nada nuevo —
+    // mejor eso que arriesgarse a pisar una semana real que todavía no llegamos a ver.
+    toast("No se pudo confirmar si esa semana ya existe — probá de nuevo en un momento.");
+    document.getElementById("weekStart").value=state.weekStart||"";
+    return;
+  }
   const seed=blankWeek(dateStr);
   const prevKey=addDaysISO(dateStr,-7);
   const prevWeek=localWeeks[prevKey]||(prevKey===weekKeyOf(state)?weekPart(state):null);
